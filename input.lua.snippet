@@ -1,0 +1,79 @@
+-- Three fingers on the touchpad follow the workspace layout in front of us:
+-- on a scrolling workspace they drag the windows around, everywhere else they
+-- swipe to the next workspace.
+-- See https://wiki.hypr.land/Configuring/Advanced-and-Cool/Gestures/
+--
+-- Let the windows come to rest wherever the fingers left them, instead of
+-- snapping the tape to the nearest column on release.
+hl.config({
+  gestures = {
+    scrolling = {
+      move_snap_to_grid = false,
+    },
+  },
+})
+
+-- A fingers + axis slot holds one gesture only, and those two actions are
+-- mutually exclusive, so the bound action has to follow the layout. Omarchy
+-- applies a workspace layout through a workspace rule, and changing a rule
+-- refreshes the config, so watching that plus the workspace itself is enough
+-- to keep the swipe honest without polling.
+local scrolling_swipe = "scroll_move"
+local workspace_swipe = "workspace"
+
+-- Pull the tape along faster than the fingers travel, so a comfortable swipe
+-- crosses a whole column instead of a third of one.
+local scroll_swipe_scale = 1.5
+
+local function swipe_spec(action)
+  return {
+    fingers = 3,
+    direction = "horizontal",
+    action = action,
+    scale = scroll_swipe_scale,
+  }
+end
+
+local function swipe_action()
+  -- A special workspace draws over the tiled one, so it owns the swipe while open.
+  local workspace = hl.get_active_special_workspace() or hl.get_active_workspace()
+  return workspace and workspace.tiled_layout == "scrolling" and scrolling_swipe or workspace_swipe
+end
+
+-- Which action holds the slot right now, or nil right after a config load.
+-- Loading a config empties the slot, so the record and the slot start together
+-- and only drift if something else claims this gesture.
+local bound_swipe
+
+local function bind_three_finger_swipe()
+  local action = swipe_action()
+  if action == bound_swipe then
+    return
+  end
+
+  -- Registering or removing a gesture can refresh the config, which calls us
+  -- again; the guard above is what keeps that from recursing. Drop the record
+  -- before touching the slot, so a nested call cannot think it owns an action
+  -- that is already gone.
+  local previous = bound_swipe
+  bound_swipe = nil
+
+  -- Removing a gesture that is not there is an error, so only ask for one that
+  -- we put there ourselves. The scale is part of what identifies a gesture, so
+  -- the removal has to repeat it or it will not find ours.
+  if previous then
+    hl.gesture(swipe_spec("unset"))
+  end
+
+  hl.gesture(swipe_spec(action))
+  bound_swipe = action
+end
+
+bind_three_finger_swipe()
+
+for _, event in ipairs({ "workspace.active", "workspace.special_active", "monitor.focused", "config.props_refreshed" }) do
+  hl.on(event, bind_three_finger_swipe)
+end
+
+-- Four fingers keep reaching the workspace switcher from a scrolling workspace.
+hl.gesture({ fingers = 4, direction = "horizontal", action = workspace_swipe })
